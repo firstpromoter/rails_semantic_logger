@@ -6,9 +6,12 @@ Bundler.require
 
 module Dummy
   class Application < Rails::Application
+    config.load_defaults "#{Rails::VERSION::MAJOR}.#{Rails::VERSION::MINOR}" if config.respond_to?(:load_defaults)
+
     # Configure sensitive parameters which will be filtered from the log file.
     config.filter_parameters += [:password]
     config.active_record.sqlite3.represent_boolean_as_integer = true if config.active_record.sqlite3
+    config.active_record.async_query_executor = :global_thread_pool if (Rails::VERSION::MAJOR == 7 && Rails::VERSION::MINOR >= 1) || Rails::VERSION::MAJOR > 7
 
     # Settings in config/environments/* take precedence over those specified here.
     # Application configuration should go into files in config/initializers

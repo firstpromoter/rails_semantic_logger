@@ -2,17 +2,24 @@ module RailsSemanticLogger
   module ActiveRecord
     class LogSubscriber < ActiveSupport::LogSubscriber
       IGNORE_PAYLOAD_NAMES = %w[SCHEMA EXPLAIN].freeze
+      RAILS_VERSION_ENDING_SET_RUNTIME_SUPPORT = Gem::Version.new( "8.0.3")
 
       class << self
         attr_reader :logger
       end
 
       def self.runtime=(value)
-        ::ActiveRecord::RuntimeRegistry.sql_runtime = value
+        return if Rails.version >= RAILS_VERSION_ENDING_SET_RUNTIME_SUPPORT
+
+        ::ActiveRecord::RuntimeRegistry.respond_to?(:stats) ?
+          ::ActiveRecord::RuntimeRegistry.stats.sql_runtime = value :
+          ::ActiveRecord::RuntimeRegistry.sql_runtime = value
       end
 
       def self.runtime
-        ::ActiveRecord::RuntimeRegistry.sql_runtime ||= 0
+        ::ActiveRecord::RuntimeRegistry.respond_to?(:stats) ?
+          ::ActiveRecord::RuntimeRegistry.stats.sql_runtime ||= 0 :
+          ::ActiveRecord::RuntimeRegistry.sql_runtime ||= 0
       end
 
       def self.reset_runtime
@@ -33,6 +40,7 @@ module RailsSemanticLogger
         log_payload[:binds] = bind_values(payload) unless (payload[:binds] || []).empty?
         log_payload[:allocations] = event.allocations if event.respond_to?(:allocations)
         log_payload[:cached] = event.payload[:cached]
+        log_payload[:async] = true if event.payload[:async]
 
         log = {
           message:  name,
@@ -54,9 +62,23 @@ module RailsSemanticLogger
 
       # When multiple values are received for a single bound field, it is converted into an array
       def add_bind_value(binds, key, value)
-        key        = key.downcase.to_sym unless key.nil?
-        value      = (Array(binds[key]) << value) if binds.key?(key)
+        key = key.downcase.to_sym unless key.nil?
+
+        if rails_filter_params_include?(key)
+          value = "[FILTERED]"
+        elsif binds.key?(key)
+          value = (Array(binds[key]) << value)
+        end
+
         binds[key] = value
+      end
+
+      def rails_filter_params_include?(key)
+        filter_parameters = Rails.configuration.filter_parameters
+
+        return filter_parameters.first.match? key if filter_parameters.first.is_a? Regexp
+
+        filter_parameters.include? key
       end
 
       def logger
@@ -196,8 +218,8 @@ module RailsSemanticLogger
         alias bind_values bind_values_v5_0_3
         alias render_bind render_bind_v5_0_3
         alias type_casted_binds type_casted_binds_v5_0_3
-      elsif (Rails::VERSION::MAJOR == 6 && Rails::VERSION::MINOR > 0) || # ~> 6.1.0
-            Rails::VERSION::MAJOR == 7
+      elsif (Rails::VERSION::MAJOR == 6 && Rails::VERSION::MINOR > 0) ||
+            Rails::VERSION::MAJOR >= 7 # ~> 6.1.0 && >= 7.x.x
         alias bind_values bind_values_v6_1
         alias render_bind render_bind_v6_1
         alias type_casted_binds type_casted_binds_v5_1_5
